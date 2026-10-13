@@ -1,4 +1,8 @@
 streamlit>=1.41.1,<2.0
 python-dotenv>=1.0.1,<2.0
+langchain>=1.0.0,<2.0
+langgraph>=1.0.0,<2.0
+langchain-google-genai>=4.4.0,<5.0
+langchain-groq>=1.0.0,<2.0
+langchain-openai>=1.0.0,<2.0
 google-genai>=2.0.0,<3.0
-openai>=1.60.0,<3.0

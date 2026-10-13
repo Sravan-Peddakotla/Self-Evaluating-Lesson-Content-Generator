@@ -11,7 +11,12 @@ import uuid
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
+
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, START, StateGraph
 
 
 RUBRIC = (
@@ -26,42 +31,63 @@ _RETRYABLE_GEMINI_CODES = {408, 429, 500, 502, 503, 504}
 _MAX_GEMINI_RETRIES = 2
 
 
+class LessonPipelineState(TypedDict):
+    provider: str
+    model: str
+    api_key: str
+    topic: str
+    max_retries: int
+    adaptive_guidance: str
+    attempt_number: int
+    attempts: list[dict[str, Any]]
+    rejection_reasons: list[str]
+    lesson: str
+    evaluation: dict[str, Any]
+    passed: bool
+
+
+def _gemini_error_code(error: Exception) -> int | None:
+    code = getattr(error, "code", None)
+    if callable(code):
+        code = code()
+    if code is None:
+        code = getattr(error, "status_code", None)
+    if code is None:
+        code = getattr(getattr(error, "response", None), "status_code", None)
+    try:
+        return int(code)
+    except (TypeError, ValueError):
+        return None
+
+
 def call_model(provider: str, model: str, api_key: str, prompt: str) -> str:
-    """Call one supported text-generation API and return its text response."""
+    """Invoke a LangChain chat model and return its text response."""
     if provider == "Google Gemini":
-        from google import genai
-
         for retry_index in range(_MAX_GEMINI_RETRIES + 1):
-            client = genai.Client(api_key=api_key)
-            retry_delay = None
             try:
-                response = client.interactions.create(
+                chat_model = ChatGoogleGenerativeAI(
                     model=model,
-                    input=prompt,
+                    api_key=api_key,
+                    retries=0,
                 )
-                text = response.output_text
-            except genai.errors.APIError as error:
-                if error.code not in _RETRYABLE_GEMINI_CODES or retry_index == _MAX_GEMINI_RETRIES:
-                    raise
-                retry_delay = 2**retry_index
-            finally:
-                client.close()
-
-            if retry_delay is None:
+                response = chat_model.invoke(prompt)
+                text = response.text
                 break
-            time.sleep(retry_delay)
+            except Exception as error:
+                if (
+                    _gemini_error_code(error) not in _RETRYABLE_GEMINI_CODES
+                    or retry_index == _MAX_GEMINI_RETRIES
+                ):
+                    raise
+                time.sleep(2**retry_index)
     elif provider == "OpenAI":
-        from openai import OpenAI
-
-        client = OpenAI(api_key=api_key)
-        try:
-            response = client.responses.create(
-                model=model,
-                input=prompt,
-            )
-            text = response.output_text
-        finally:
-            client.close()
+        chat_model = ChatOpenAI(model=model, api_key=api_key)
+        response = chat_model.invoke(prompt)
+        text = response.text
+    elif provider == "Groq":
+        chat_model = ChatGroq(model=model, api_key=api_key, max_retries=2)
+        response = chat_model.invoke(prompt)
+        text = response.text
     else:
         raise ValueError(f"Unsupported provider: {provider}")
 
@@ -166,21 +192,30 @@ def run_pipeline(
     max_retries: int,
     adaptive_guidance: str = "",
 ) -> dict[str, Any]:
-    """Generate, judge, and retry until every hard checkpoint passes or retries run out."""
-    attempts = []
-    rejection_reasons: list[str] = []
-    lesson = ""
-    evaluation: dict[str, Any] = {"checks": [], "passed": False, "retry_guidance": []}
+    """Generate, judge, and retry in a LangGraph state machine."""
 
-    for attempt_number in range(max_retries + 1):
+    def generate_node(state: LessonPipelineState) -> dict[str, Any]:
         lesson = call_model(
-            provider,
-            model,
-            api_key,
-            build_generation_prompt(topic, rejection_reasons, adaptive_guidance),
+            state["provider"],
+            state["model"],
+            state["api_key"],
+            build_generation_prompt(
+                state["topic"],
+                state["rejection_reasons"],
+                state["adaptive_guidance"],
+            ),
         )
+        return {"lesson": lesson, "attempt_number": state["attempt_number"] + 1}
+
+    def evaluate_node(state: LessonPipelineState) -> dict[str, Any]:
         try:
-            evaluation = evaluate_lesson(provider, model, api_key, topic, lesson)
+            evaluation = evaluate_lesson(
+                state["provider"],
+                state["model"],
+                state["api_key"],
+                state["topic"],
+                state["lesson"],
+            )
         except (ValueError, json.JSONDecodeError) as error:
             evaluation = {
                 "checks": [
@@ -195,28 +230,70 @@ def run_pipeline(
                 "passed": False,
                 "retry_guidance": ["Return a complete, valid evaluation with every rubric checkpoint."],
             }
-        attempts.append({
-            "attempt": attempt_number + 1,
-            "lesson": lesson,
-            "evaluation": evaluation,
-        })
-        if evaluation["passed"]:
-            break
-        rejection_reasons = [
-            f"{check['label']}: {check['reason']}"
-            for check in evaluation["checks"]
-            if not check["pass"]
+
+        attempts = [
+            *state["attempts"],
+            {
+                "attempt": state["attempt_number"],
+                "lesson": state["lesson"],
+                "evaluation": evaluation,
+            },
         ]
-        rejection_reasons.extend(evaluation["retry_guidance"])
+        rejection_reasons = []
+        if not evaluation["passed"]:
+            rejection_reasons = [
+                f"{check['label']}: {check['reason']}"
+                for check in evaluation["checks"]
+                if not check["pass"]
+            ]
+            rejection_reasons.extend(evaluation["retry_guidance"])
+
+        return {
+            "attempts": attempts,
+            "evaluation": evaluation,
+            "passed": evaluation["passed"],
+            "rejection_reasons": rejection_reasons,
+        }
+
+    def route_after_evaluation(state: LessonPipelineState) -> str:
+        if state["passed"] or state["attempt_number"] >= state["max_retries"] + 1:
+            return "finish"
+        return "generate"
+
+    graph_builder = StateGraph(LessonPipelineState)
+    graph_builder.add_node("generate", generate_node)
+    graph_builder.add_node("evaluate", evaluate_node)
+    graph_builder.add_edge(START, "generate")
+    graph_builder.add_edge("generate", "evaluate")
+    graph_builder.add_conditional_edges(
+        "evaluate",
+        route_after_evaluation,
+        {"generate": "generate", "finish": END},
+    )
+    graph = graph_builder.compile()
+    final_state = graph.invoke({
+        "provider": provider,
+        "model": model,
+        "api_key": api_key,
+        "topic": topic,
+        "max_retries": max_retries,
+        "adaptive_guidance": adaptive_guidance,
+        "attempt_number": 0,
+        "attempts": [],
+        "rejection_reasons": [],
+        "lesson": "",
+        "evaluation": {"checks": [], "passed": False, "retry_guidance": []},
+        "passed": False,
+    })
 
     return {
         "id": str(uuid.uuid4()),
         "topic": topic,
         "provider": provider,
         "model": model,
-        "passed": evaluation["passed"],
-        "lesson": lesson,
-        "attempts": attempts,
+        "passed": final_state["passed"],
+        "lesson": final_state["lesson"],
+        "attempts": final_state["attempts"],
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
 

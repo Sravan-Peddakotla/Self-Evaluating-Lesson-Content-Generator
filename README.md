@@ -1,6 +1,6 @@
 # Lesson Foundry
 
-A Streamlit app that creates a beginner lesson, checks it against a hard pass/fail rubric, and retries with specific rejection reasons. It is designed for the assignment topic, **Introduction to RAG**, but accepts any topic.
+A Streamlit app using LangChain chat models and a LangGraph state machine to create a beginner lesson, check it against a hard pass/fail rubric, and retry with specific rejection reasons. It is designed for the assignment topic, **Introduction to RAG**, but accepts any topic.
 
 ## Run locally
 
@@ -14,13 +14,13 @@ Copy-Item .env.example .env
 streamlit run main.py
 ```
 
-Choose Google Gemini or OpenAI in the sidebar, then enter the matching API key. Keys can be entered in the password field for the current session or set as `GEMINI_API_KEY` / `OPENAI_API_KEY` in `.env`. The initial topic is Introduction to RAG. The default models are `gemini-3.8-flash` and `gpt-4o-mini`; change the model field if your account uses another model. Gemini requests use Google's Interactions API.
+Groq is selected by default. Enter its API key in the sidebar or set `GROQ_API_KEY` in `.env`. Google Gemini and OpenAI remain available in the provider selector and use `GEMINI_API_KEY` and `OPENAI_API_KEY`. The initial topic is Introduction to RAG. Default models are `openai/gpt-oss-120b`, `gemini-3.8-flash`, and `gpt-4o-mini`; change the model field if needed. LangChain's `ChatGroq`, `ChatGoogleGenerativeAI`, and `ChatOpenAI` integrations handle model calls.
 
 ## How the system works
 
-1. **Generate:** a teaching prompt requests a standalone lesson for a zero-background learner, using plain language, an explained example, and a recap.
-2. **Evaluate:** a separate model call sees the topic, draft, and six binary checkpoints: accuracy and grounding, beginner language, worked example, explained jargon, complete coverage, and coherent flow. A checkpoint passes only when the evaluator returns an explicit boolean `true`.
-3. **Regenerate:** any failed checkpoint sends its reason and evaluator suggestions into the next generation prompt. Choose one or two retries, for a strict maximum of two or three drafts.
+1. **Generate:** the LangGraph `generate` node calls a LangChain chat model with the existing teaching prompt for a zero-background learner.
+2. **Evaluate:** the `evaluate` node makes a separate model call against the same six binary checkpoints: accuracy and grounding, beginner language, worked example, explained jargon, complete coverage, and coherent flow. A checkpoint passes only when the evaluator returns an explicit boolean `true`.
+3. **Regenerate:** a conditional graph edge ends on a pass or exhausted retry limit; otherwise it returns to `generate` with failed-check reasons and evaluator suggestions. Choose one or two retries, for a strict maximum of two or three drafts.
 4. **Remember:** SQLite stores drafts, evaluations, outcomes, and human feedback across app restarts. Repeated rubric failures and recent feedback become compact guidance for later generations.
 
 The rejection log shows each draft, the failed checks, and whether their reasons were sent forward. A failed final draft is labeled **DID NOT PASS** rather than being presented as approved. Lessons can be downloaded as Markdown.

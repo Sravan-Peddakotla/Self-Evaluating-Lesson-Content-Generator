@@ -103,15 +103,24 @@ def render_run(run: dict) -> None:
 with st.sidebar:
     st.markdown("## Lesson Foundry")
     st.caption("Generate · judge · improve")
-    provider = st.selectbox("Model provider", ["Google Gemini", "OpenAI"])
-    env_key_name = "GEMINI_API_KEY" if provider == "Google Gemini" else "OPENAI_API_KEY"
+    providers = ["Groq", "Google Gemini", "OpenAI"]
+    provider = st.selectbox("Model provider", providers, index=0, key="provider_v2")
+    env_key_name = {
+        "Groq": "GROQ_API_KEY",
+        "Google Gemini": "GEMINI_API_KEY",
+        "OpenAI": "OPENAI_API_KEY",
+    }[provider]
     env_key = os.getenv(env_key_name, "")
     try:
         env_key = env_key or st.secrets.get(env_key_name, "")
     except (FileNotFoundError, AttributeError):
         pass
     api_key = st.text_input(f"{provider} API key", value=env_key, type="password", help="Used only for this session; set an environment variable to avoid entering it here.")
-    default_model = "gemini-3.8-flash" if provider == "Google Gemini" else "gpt-4o-mini"
+    default_model = {
+        "Groq": "openai/gpt-oss-120b",
+        "Google Gemini": "gemini-3.8-flash",
+        "OpenAI": "gpt-4o-mini",
+    }[provider]
     model = st.text_input("Model", value=default_model, key=f"model_name_v2_{provider.replace(' ', '_')}")
     max_retries = st.select_slider("Maximum retries", options=[1, 2], value=2)
     st.divider()

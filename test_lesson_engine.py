@@ -5,77 +5,75 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from google.genai import errors as gemini_errors
-
 from lesson_engine import LessonMemory, RUBRIC, _json_object, call_model, run_pipeline
 
 
 class LessonEngineTests(unittest.TestCase):
-    def test_gemini_client_stays_open_until_response_returns(self):
-        client = Mock()
-        client.interactions.create.return_value = SimpleNamespace(output_text="lesson")
-        with patch("google.genai.Client", return_value=client):
+    def test_gemini_langchain_model_returns_response_text(self):
+        chat_model = Mock()
+        chat_model.invoke.return_value = SimpleNamespace(text="lesson")
+        with patch("lesson_engine.ChatGoogleGenerativeAI", return_value=chat_model) as model_factory:
             result = call_model("Google Gemini", "test-model", "fake-key", "prompt")
 
         self.assertEqual(result, "lesson")
-        self.assertEqual(
-            client.mock_calls,
-            [
-                unittest.mock.call.interactions.create(model="test-model", input="prompt"),
-                unittest.mock.call.close(),
-            ],
-        )
+        model_factory.assert_called_once_with(model="test-model", api_key="fake-key", retries=0)
+        chat_model.invoke.assert_called_once_with("prompt")
 
     def test_gemini_retries_temporary_503_and_closes_each_client(self):
-        first_client = Mock()
-        first_client.interactions.create.side_effect = gemini_errors.ServerError(
-            503,
-            {"error": {"message": "temporarily busy"}},
-        )
-        second_client = Mock()
-        second_client.interactions.create.return_value = SimpleNamespace(output_text="lesson")
+        first_model = Mock()
+        first_model.invoke.side_effect = RuntimeError("temporarily busy")
+        first_model.invoke.side_effect.code = 503
+        second_model = Mock()
+        second_model.invoke.return_value = SimpleNamespace(text="lesson")
         with (
-            patch("google.genai.Client", side_effect=[first_client, second_client]),
+            patch("lesson_engine.ChatGoogleGenerativeAI", side_effect=[first_model, second_model]),
             patch("lesson_engine.time.sleep") as sleep,
         ):
             result = call_model("Google Gemini", "test-model", "fake-key", "prompt")
 
         self.assertEqual(result, "lesson")
-        first_client.close.assert_called_once()
-        second_client.close.assert_called_once()
+        first_model.invoke.assert_called_once_with("prompt")
+        second_model.invoke.assert_called_once_with("prompt")
         sleep.assert_called_once_with(1)
 
     def test_gemini_does_not_retry_permanent_api_errors(self):
-        client = Mock()
-        client.interactions.create.side_effect = gemini_errors.ClientError(
-            404,
-            {"error": {"message": "model not found"}},
-        )
+        chat_model = Mock()
+        model_error = RuntimeError("model not found")
+        model_error.code = 404
+        chat_model.invoke.side_effect = model_error
         with (
-            patch("google.genai.Client", return_value=client),
+            patch("lesson_engine.ChatGoogleGenerativeAI", return_value=chat_model),
             patch("lesson_engine.time.sleep") as sleep,
-            self.assertRaises(gemini_errors.ClientError),
+            self.assertRaisesRegex(RuntimeError, "model not found"),
         ):
             call_model("Google Gemini", "missing-model", "fake-key", "prompt")
 
-        client.interactions.create.assert_called_once()
-        client.close.assert_called_once()
+        chat_model.invoke.assert_called_once_with("prompt")
         sleep.assert_not_called()
 
-    def test_openai_client_stays_open_until_response_returns(self):
-        client = Mock()
-        client.responses.create.return_value = SimpleNamespace(output_text="lesson")
-        with patch("openai.OpenAI", return_value=client):
+    def test_openai_langchain_model_returns_response_text(self):
+        chat_model = Mock()
+        chat_model.invoke.return_value = SimpleNamespace(text="lesson")
+        with patch("lesson_engine.ChatOpenAI", return_value=chat_model) as model_factory:
             result = call_model("OpenAI", "test-model", "fake-key", "prompt")
 
         self.assertEqual(result, "lesson")
-        self.assertEqual(
-            client.mock_calls,
-            [
-                unittest.mock.call.responses.create(model="test-model", input="prompt"),
-                unittest.mock.call.close(),
-            ],
+        model_factory.assert_called_once_with(model="test-model", api_key="fake-key")
+        chat_model.invoke.assert_called_once_with("prompt")
+
+    def test_groq_langchain_model_returns_response_text(self):
+        chat_model = Mock()
+        chat_model.invoke.return_value = SimpleNamespace(text="lesson")
+        with patch("lesson_engine.ChatGroq", return_value=chat_model) as model_factory:
+            result = call_model("Groq", "test-model", "fake-key", "prompt")
+
+        self.assertEqual(result, "lesson")
+        model_factory.assert_called_once_with(
+            model="test-model",
+            api_key="fake-key",
+            max_retries=2,
         )
+        chat_model.invoke.assert_called_once_with("prompt")
 
     def test_json_parser_accepts_fenced_response(self):
         self.assertEqual(_json_object('```json\n{"ok": true}\n```'), {"ok": True})
