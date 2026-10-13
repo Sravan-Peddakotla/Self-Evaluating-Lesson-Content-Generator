@@ -1,0 +1,8 @@
+.env
+.streamlit/secrets.toml
+.venv/
+__pycache__/
+*.py[cod]
+lesson_memory.sqlite3
+lesson_memory.sqlite3-shm
+lesson_memory.sqlite3-wal

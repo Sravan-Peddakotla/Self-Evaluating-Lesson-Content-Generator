@@ -1,0 +1,12 @@
+[project]
+name = "ai-teacher"
+version = "0.1.0"
+description = "A self-evaluating beginner lesson generator powered by Gemini or OpenAI"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+	"streamlit>=1.41.1,<2.0",
+	"python-dotenv>=1.0.1,<2.0",
+	"google-genai>=2.0.0,<3.0",
+	"openai>=1.60.0,<3.0",
+]
