@@ -104,13 +104,10 @@ def render_run(run: dict) -> None:
 with st.sidebar:
     st.markdown("## Lesson Foundry")
     st.caption("Generate · judge · improve")
-    providers = ["Groq", "Google Gemini", "OpenAI"]
-    provider = st.selectbox("Model provider", providers, index=0, key="provider_v2")
-    env_key_name = {
-        "Groq": "GROQ_API_KEY",
-        "Google Gemini": "GEMINI_API_KEY",
-        "OpenAI": "OPENAI_API_KEY",
-    }[provider]
+    provider = "Groq"
+    st.markdown("**Model provider**")
+    st.write("GROQ")
+    env_key_name = "GROQ_API_KEY"
     env_key = os.getenv(env_key_name, "")
     try:
         env_key = env_key or st.secrets.get(env_key_name, "")
@@ -118,15 +115,10 @@ with st.sidebar:
         pass
     api_key = env_key
     st.info("Using free-tier API key. Results may not be appropriate.")
-    default_model = {
-        "Groq": "openai/gpt-oss-120b",
-        "Google Gemini": "gemini-3.8-flash",
-        "OpenAI": "gpt-4o-mini",
-    }[provider]
-    model = st.text_input("Model", value=default_model, key=f"model_name_v2_{provider.replace(' ', '_')}")
-    max_retries = st.select_slider("Maximum retries", options=[0, 1, 2], value=2)
+    model = st.text_input("Model", value="openai/gpt-oss-120b", key="model_name_v2_groq")
+    max_retries = st.select_slider("Maximum retries", options=[0, 1, 2, 3], value=2)
     st.divider()
-    st.caption("The selected provider and model handle both generation and evaluation. Each draft receives six binary checks; at most two retries are allowed.")
+    st.caption("The Groq model handles both generation and evaluation. Each draft receives six binary checks; at most three retries are allowed.")
     with st.expander("Persistent memory"):
         guidance = memory.adaptive_guidance()
         st.write(guidance or "No recurring failures yet. Failure patterns will appear after they repeat across runs.")
