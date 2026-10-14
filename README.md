@@ -20,10 +20,10 @@ Groq is selected by default. Enter its API key in the sidebar or set `GROQ_API_K
 
 1. **Generate:** the LangGraph `generate` node calls a LangChain chat model with the existing teaching prompt for a zero-background learner.
 2. **Evaluate:** the `evaluate` node makes a separate model call against the same six binary checkpoints: accuracy and grounding, beginner language, worked example, explained jargon, complete coverage, and coherent flow. A checkpoint passes only when the evaluator returns an explicit boolean `true`.
-3. **Regenerate:** a conditional graph edge ends on a pass or exhausted retry limit; otherwise it returns to `generate` with failed-check reasons and evaluator suggestions. Choose one or two retries, for a strict maximum of two or three drafts.
+3. **Regenerate:** a conditional graph edge ends on a pass or exhausted retry limit; otherwise it returns to `generate` with failed-check reasons and evaluator suggestions. Choose zero, one, or two retries, for a strict maximum of three drafts. The UI reports when it is generating, evaluating, retrying, and when the rubric has passed or the retry limit is exhausted.
 4. **Remember:** SQLite stores drafts, evaluations, outcomes, and human feedback across app restarts. Repeated rubric failures and recent feedback become compact guidance for later generations.
 
-The rejection log shows each draft, the failed checks, and whether their reasons were sent forward. A failed final draft is labeled **DID NOT PASS** rather than being presented as approved. Lessons can be downloaded as Markdown.
+The rejection log shows each draft, the failed checks, and whether their reasons were sent forward. A failed final draft is labeled **DID NOT PASS** rather than being presented as approved. Lessons can include a small text diagram or table when useful and can be downloaded as Markdown; the app does not generate image assets.
 
 ## Design choices and limits
 

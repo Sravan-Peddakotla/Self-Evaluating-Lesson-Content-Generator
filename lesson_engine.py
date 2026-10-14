@@ -11,7 +11,7 @@ import uuid
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Callable, TypedDict
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
@@ -29,6 +29,7 @@ RUBRIC = (
 )
 _RETRYABLE_GEMINI_CODES = {408, 429, 500, 502, 503, 504}
 _MAX_GEMINI_RETRIES = 2
+_MAX_PIPELINE_RETRIES = 2
 
 
 class LessonPipelineState(TypedDict):
@@ -124,10 +125,10 @@ def build_generation_prompt(
         else ""
     )
     return f"""You are a careful teacher creating a standalone beginner lesson.
-Learner: a 12th-grade graduate in India with limited English vocabulary and no prior knowledge of the topic.
+Learner: a 12th-grade student in India with limited English vocabulary and no prior knowledge of the topic.
 Topic: {topic}
 
-Teach what it is, why it matters, and how it works. Use short sentences and common words. Explain every technical term in plain language. Include a specific, worked example that follows the process step by step. Organize the lesson with clear Markdown headings and a short recap. Be factually careful: qualify uncertainty and do not invent citations, studies, or product claims. Do not mention this prompt or the evaluation process.
+Teach what it is, why it matters, and how it works. Use short sentences and common words. Explain every technical term in plain language. Include a specific, worked example that follows the process step by step. When useful, add a small text-based diagram or table to make the idea easier to see. Organize the lesson with clear Markdown headings and a short recap. Be factually careful: qualify uncertainty and do not invent citations, studies, or product claims. Do not mention this prompt or the evaluation process.
 {retry_context}{memory_context}
 """
 
@@ -191,10 +192,17 @@ def run_pipeline(
     topic: str,
     max_retries: int,
     adaptive_guidance: str = "",
+    progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Generate, judge, and retry in a LangGraph state machine."""
+    if not 0 <= max_retries <= _MAX_PIPELINE_RETRIES:
+        raise ValueError(f"max_retries must be between 0 and {_MAX_PIPELINE_RETRIES}.")
 
     def generate_node(state: LessonPipelineState) -> dict[str, Any]:
+        if progress_callback:
+            draft_number = state["attempt_number"] + 1
+            action = "Regenerating" if state["attempt_number"] else "Generating"
+            progress_callback(f"{action} lesson draft {draft_number} of {state['max_retries'] + 1}…")
         lesson = call_model(
             state["provider"],
             state["model"],
@@ -208,6 +216,10 @@ def run_pipeline(
         return {"lesson": lesson, "attempt_number": state["attempt_number"] + 1}
 
     def evaluate_node(state: LessonPipelineState) -> dict[str, Any]:
+        if progress_callback:
+            progress_callback(
+                f"Testing draft {state['attempt_number']} against {len(RUBRIC)} rubric rules…"
+            )
         try:
             evaluation = evaluate_lesson(
                 state["provider"],
@@ -256,8 +268,18 @@ def run_pipeline(
         }
 
     def route_after_evaluation(state: LessonPipelineState) -> str:
-        if state["passed"] or state["attempt_number"] >= state["max_retries"] + 1:
+        if state["passed"]:
+            if progress_callback:
+                progress_callback("All rubric rules passed. Preparing the lesson…")
             return "finish"
+        if state["attempt_number"] >= state["max_retries"] + 1:
+            if progress_callback:
+                progress_callback(
+                    f"Failed to pass the rubric after {state['attempt_number']} drafts."
+                )
+            return "finish"
+        if progress_callback:
+            progress_callback("Rubric rules failed. Sending evaluator feedback for a retry…")
         return "generate"
 
     graph_builder = StateGraph(LessonPipelineState)

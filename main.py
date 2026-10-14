@@ -34,8 +34,9 @@ h1 { font-size:2.35rem !important; line-height:1.1 !important; }
 .lede { max-width:760px; color:#58615b; font-size:1.04rem; line-height:1.6; }
 .status-pass { color:#315c3d; background:#e2ebdf; padding:.4rem .7rem; display:inline-block; font-family:'DM Mono',monospace; font-size:.78rem; }
 .status-fail { color:#923b2a; background:#f4e2dc; padding:.4rem .7rem; display:inline-block; font-family:'DM Mono',monospace; font-size:.78rem; }
-.stButton > button[kind="primary"] { background:var(--coral); border-color:var(--coral); }
-.stButton > button { border-radius:4px; }
+.stButton > button[kind="primary"] { background:var(--coral); border-color:var(--coral); color:#fff; }
+.stButton > button[kind="primary"]:hover { background:#fff; border-color:#202725; color:#202725; }
+.stButton > button { border-radius:8px; }
 div[data-testid="stTextArea"] textarea { background:#fffefa; }
 hr { border-color:var(--line); }
 </style>
@@ -115,16 +116,17 @@ with st.sidebar:
         env_key = env_key or st.secrets.get(env_key_name, "")
     except (FileNotFoundError, AttributeError):
         pass
-    api_key = st.text_input(f"{provider} API key", value=env_key, type="password", help="Used only for this session; set an environment variable to avoid entering it here.")
+    api_key = env_key
+    st.info("Using free-tier API key. Results may not be appropriate.")
     default_model = {
         "Groq": "openai/gpt-oss-120b",
         "Google Gemini": "gemini-3.8-flash",
         "OpenAI": "gpt-4o-mini",
     }[provider]
     model = st.text_input("Model", value=default_model, key=f"model_name_v2_{provider.replace(' ', '_')}")
-    max_retries = st.select_slider("Maximum retries", options=[1, 2], value=2)
+    max_retries = st.select_slider("Maximum retries", options=[0, 1, 2], value=2)
     st.divider()
-    st.caption("Each draft receives six binary checks. A single failed check triggers a retry with its reasons; the run always stops after the selected limit.")
+    st.caption("The selected provider and model handle both generation and evaluation. Each draft receives six binary checks; at most two retries are allowed.")
     with st.expander("Persistent memory"):
         guidance = memory.adaptive_guidance()
         st.write(guidance or "No recurring failures yet. Failure patterns will appear after they repeat across runs.")
@@ -142,12 +144,17 @@ with button_col:
 
 if generate:
     if not api_key:
-        st.error(f"Add an API key for {provider} in the sidebar, or set {env_key_name} in your environment.")
+        st.error(f"Set {env_key_name} in your environment or Streamlit secrets to use {provider}.")
     elif not topic.strip():
         st.error("Enter a topic to get started.")
     else:
         try:
-            with st.spinner("Writing a draft, checking the rubric, and revising if needed…"):
+            status = st.status("Starting lesson generation…", expanded=True)
+
+            def report_progress(message: str) -> None:
+                status.write(message)
+
+            with status:
                 run = run_pipeline(
                     provider=provider,
                     model=model.strip(),
@@ -155,10 +162,18 @@ if generate:
                     topic=topic.strip(),
                     max_retries=max_retries,
                     adaptive_guidance=memory.adaptive_guidance(),
+                    progress_callback=report_progress,
                 )
                 memory.save_run(run)
+                status.update(
+                    label="Lesson ready" if run["passed"] else "Lesson did not pass the rubric",
+                    state="complete" if run["passed"] else "error",
+                    expanded=not run["passed"],
+                )
             st.session_state["active_run_id"] = run["id"]
         except Exception as error:
+            if "status" in locals():
+                status.update(label="Failed to generate lesson", state="error", expanded=True)
             st.error(f"The run could not be completed: {error}")
 
 recent = memory.recent_runs()

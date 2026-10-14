@@ -103,6 +103,35 @@ class LessonEngineTests(unittest.TestCase):
         retry_prompt = model_call.call_args_list[2].args[3]
         self.assertIn("Needs a concrete walkthrough", retry_prompt)
 
+    def test_progress_reports_two_retries_and_stops_after_three_drafts(self):
+        failed = {
+            "checks": [
+                {"id": key, "pass": False, "reason": "Needs improvement."}
+                for key, _, _ in RUBRIC
+            ],
+            "retry_guidance": [],
+        }
+        progress = []
+        with patch("lesson_engine.call_model", side_effect=[
+            "Draft one", json.dumps(failed),
+            "Draft two", json.dumps(failed),
+            "Draft three", json.dumps(failed),
+        ]):
+            result = run_pipeline(
+                "Groq", "test-model", "fake-key", "Introduction to RAG", 2,
+                progress_callback=progress.append,
+            )
+
+        self.assertFalse(result["passed"])
+        self.assertEqual(len(result["attempts"]), 3)
+        self.assertTrue(any("Regenerating lesson draft 2" in item for item in progress))
+        self.assertTrue(any("Regenerating lesson draft 3" in item for item in progress))
+        self.assertEqual(progress[-1], "Failed to pass the rubric after 3 drafts.")
+
+    def test_retry_limit_cannot_exceed_two(self):
+        with self.assertRaisesRegex(ValueError, "between 0 and 2"):
+            run_pipeline("Groq", "test-model", "fake-key", "RAG", 3)
+
     def test_recurring_failures_and_human_feedback_shape_future_prompt(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             memory = LessonMemory(Path(temp_dir) / "memory.sqlite3")
