@@ -35,6 +35,18 @@ The rejection log shows each draft, the failed checks, and whether their reasons
 - SQLite was chosen over a vector database because the memory is structured run history and concise feedback, not semantic document retrieval. Configure another path with `LESSON_MEMORY_DB`.
 - API keys are not written to the run database. For deployment, use Streamlit secrets or a managed secret store and protect the app with authentication.
 
+## Future improvements
+
+With more time, I would like to extend the project with:
+
+- **A polished frontend:** Build a cleaner, more interactive interface with smooth transitions using React or Next.js.
+- **Observability:** Integrate LangSmith to trace model calls, inspect runs, and identify issues in lesson generation and evaluation.
+- **Faster responses:** Offer paid API providers or models as an option, and measure their latency and quality against the current setup.
+- **PDF downloads:** Let users download generated lessons as PDF, in addition to the existing Markdown download.
+- **Scalable history storage:** Consider PostgreSQL for deployments that need concurrent users and more robust, long-term history storage.
+- **Multiple chat threads:** Let users create and switch between separate conversations, each with its own lesson history.
+- **More improvements:** Add features based on user feedback and the needs of future deployments.
+
 ## Tests
 
 Run the provider-independent pipeline and persistence tests with:
